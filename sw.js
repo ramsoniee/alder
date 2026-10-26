@@ -1,5 +1,5 @@
 // Офлайн: кэшируем оболочку приложения. Поднимай VERSION при каждом изменении файлов.
-const VERSION = 'alder-v5';
+const VERSION = 'alder-v6';
 const SHELL = [
   './',
   './index.html',

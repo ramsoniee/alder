@@ -61,6 +61,12 @@ export function distanceKm(a, b) {
 }
 
 export const osmLink = (lat, lon) => `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+// Google Maps (на телефоне откроется приложение карт): точка и маршрут до неё
+export const mapLink = (lat, lon) => `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+export const routeLink = (lat, lon) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+
+// Языки названий мест: в ОАЭ — арабский и английский, в России — русский
+export const langsFor = (lat, lon) => (countryAt(lat, lon) === 'AE' ? ['ar', 'en'] : ['ru']);
 
 async function cached(key, ttl, fn) {
   try {
@@ -94,12 +100,12 @@ export function locate() {
 
 // Nominatim: не чаще 1 запроса в секунду, запросы идут по очереди
 let nomLast = 0, nomQ = Promise.resolve();
-function nominatim(path) {
+function nominatim(path, lang = 'ru') {
   const run = async () => {
     const wait = Math.max(0, nomLast + 1100 - Date.now());
     if (wait) await new Promise((r) => setTimeout(r, wait));
     nomLast = Date.now();
-    const r = await fetch('https://nominatim.openstreetmap.org/' + path + (path.includes('?') ? '&' : '?') + 'format=jsonv2&accept-language=ru');
+    const r = await fetch('https://nominatim.openstreetmap.org/' + path + (path.includes('?') ? '&' : '?') + 'format=jsonv2&namedetails=1&accept-language=' + lang);
     if (!r.ok) throw new Error('Сервис карт ответил ошибкой ' + r.status);
     return r.json();
   };
@@ -108,8 +114,8 @@ function nominatim(path) {
   return p;
 }
 
-export async function placeName(lat, lon) {
-  const j = await cached(`rg:${round(lat, 2)}:${round(lon, 2)}`, 90 * DAY, () => nominatim(`reverse?lat=${lat}&lon=${lon}&zoom=10`));
+export async function placeName(lat, lon, lang = langsFor(lat, lon)[langsFor(lat, lon).length - 1]) {
+  const j = await cached(`rg:${lang}:${round(lat, 2)}:${round(lon, 2)}`, 90 * DAY, () => nominatim(`reverse?lat=${lat}&lon=${lon}&zoom=10`, lang));
   const a = j.address || {};
   return a.city || a.town || a.village || a.municipality || a.county || a.state || (j.display_name || 'Моё место').split(',')[0];
 }
@@ -153,50 +159,70 @@ export async function countsNear(plants, loc) {
 
 const PLACE_TYPES = new Set(['park', 'garden', 'nature_reserve', 'wood', 'forest', 'recreation_ground', 'meadow', 'grassland', 'protected_area', 'national_park', 'village_green', 'common', 'scrub', 'wetland', 'heath']);
 
-async function clusterName(lat, lon) {
+async function clusterName(lat, lon, lang = 'ru') {
   try {
-    const j = await cached(`pn:${round(lat, 3)}:${round(lon, 3)}`, 90 * DAY, () => nominatim(`reverse?lat=${lat}&lon=${lon}&zoom=17`));
+    const j = await cached(`pn2:${lang}:${round(lat, 3)}:${round(lon, 3)}`, 90 * DAY, () => nominatim(`reverse?lat=${lat}&lon=${lon}&zoom=17`, lang));
     const a = j.address || {};
     if (j.name && (PLACE_TYPES.has(j.type) || ['leisure', 'natural', 'landuse', 'boundary'].includes(j.category))) return { name: j.name, kind: 'place' };
     const loose = a.park || a.nature_reserve || a.garden || a.neighbourhood || a.suburb || a.city_district || a.road || a.hamlet || a.village;
-    return { name: loose || (j.display_name || '').split(',')[0] || 'без названия', kind: a.park || a.nature_reserve || a.garden ? 'place' : 'area' };
-  } catch { return { name: 'без названия', kind: 'area' }; }
+    return { name: loose || (j.display_name || '').split(',')[0] || (lang === 'ru' ? 'без названия' : 'Unnamed area'), kind: a.park || a.nature_reserve || a.garden ? 'place' : 'area' };
+  } catch { return { name: lang === 'ru' ? 'без названия' : 'Unnamed area', kind: 'area' }; }
 }
 
 const MONTH_NAMES = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
 
-// Места, где растение чаще всего наблюдали рядом с пользователем: кластеры точек ~2 км,
-// названия кластеров берём из OSM (парк, заказник, район).
-export async function hotspots(latin, loc, km = 30) {
-  const key = await taxonKey(latin);
-  if (!key) return { total: 0, items: [], months: [] };
-  const raw = await cached(`hs:${key}:${loc.lat}:${loc.lon}:${km}`, 7 * DAY, async () => {
+// Точки наблюдений вида рядом с пользователем (кэш 7 дней): [[lat, lon, месяц], …]
+async function rawPoints(key, loc, km) {
+  return cached(`hs:${key}:${loc.lat}:${loc.lon}:${km}`, 7 * DAY, async () => {
     const q = new URLSearchParams({ taxonKey: key, geoDistance: near(loc, km), hasCoordinate: 'true', hasGeospatialIssue: 'false', occurrenceStatus: 'PRESENT', limit: '300' });
     const r = await fetch(`${GBIF}/occurrence/search?${q}`);
     if (!r.ok) throw new Error('GBIF недоступен');
     const j = await r.json();
     return { total: j.count, pts: j.results.filter((o) => o.decimalLatitude != null).map((o) => [o.decimalLatitude, o.decimalLongitude, o.month || 0]) };
   });
+}
+
+function clusterCells(pts) {
   const cells = new Map();
-  const months = new Array(13).fill(0);
-  for (const [la, lo, mo] of raw.pts) {
+  for (const [la, lo] of pts) {
     const k = `${Math.round(la / 0.018)}:${Math.round((lo * Math.cos((la * Math.PI) / 180)) / 0.018)}`;
     const c = cells.get(k) || { n: 0, la: 0, lo: 0 };
     c.n++; c.la += la; c.lo += lo;
     cells.set(k, c);
-    if (mo) months[mo]++;
   }
-  const top = [...cells.values()].sort((a, b) => b.n - a.n).slice(0, 8)
-    .map((c) => ({ count: c.n, lat: round(c.la / c.n, 4), lon: round(c.lo / c.n, 4) }));
+  return [...cells.values()].map((c) => ({ count: c.n, lat: round(c.la / c.n, 4), lon: round(c.lo / c.n, 4) }));
+}
+
+// Ближайшее к пользователю место, где вид замечали (без названий, только точка и расстояние)
+export async function nearest(latin, loc, km = 30) {
+  const key = await taxonKey(latin);
+  if (!key) return null;
+  const raw = await rawPoints(key, loc, km);
+  const cl = clusterCells(raw.pts);
+  if (!cl.length) return null;
+  const best = cl.map((c) => ({ ...c, km: distanceKm(loc, c) })).sort((a, b) => a.km - b.km)[0];
+  return { ...best, km: round(best.km, 1), total: raw.total };
+}
+
+// Места, где растение чаще всего наблюдали рядом с пользователем: кластеры точек ~2 км,
+// названия кластеров берём из OSM (парк, заказник, район). langs: первый язык — основной, второй — подпись рядом.
+export async function hotspots(latin, loc, km = 30, langs = ['ru']) {
+  const key = await taxonKey(latin);
+  if (!key) return { total: 0, items: [], months: [] };
+  const raw = await rawPoints(key, loc, km);
+  const months = new Array(13).fill(0);
+  for (const [, , mo] of raw.pts) if (mo) months[mo]++;
+  const top = clusterCells(raw.pts).sort((a, b) => b.count - a.count).slice(0, 8);
   // соседние ячейки с одним названием (один район или парк) объединяем в одну строку
   const byName = new Map();
   for (const t of top) {
-    const nm = await clusterName(t.lat, t.lon);
+    const nm = await clusterName(t.lat, t.lon, langs[0]);
     const cur = byName.get(nm.name);
     if (!cur) byName.set(nm.name, { ...t, ...nm, km: round(distanceKm(loc, t), 0) });
     else { cur.count += t.count; cur.km = Math.min(cur.km, round(distanceKm(loc, t), 0)); }
   }
   const items = [...byName.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+  if (langs[1]) for (const it of items) { const n2 = await clusterName(it.lat, it.lon, langs[1]); if (n2.name && n2.name !== it.name) it.name2 = n2.name; }
   const best = months.map((n, m) => [m, n]).filter(([m, n]) => m && n).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m]) => m).sort((a, b) => a - b);
   return { total: raw.total, sampled: raw.pts.length, items, months: best, monthText: best.map((m) => MONTH_NAMES[m - 1]) };
 }

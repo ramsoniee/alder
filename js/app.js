@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { identify, shrink } from './identify.js';
 import { SEASONS, MONTHS, range, signOf, celticOf, PLANET_SIGNS, BIRTH_FLOWERS } from './lore.js';
 import { art } from './art.js';
-import { CITIES, countryAt, locate, placeName, searchPlace, countsNear, hotspots, osmLink } from './geo.js';
+import { CITIES, countryAt, distanceKm, langsFor, locate, placeName, searchPlace, countsNear, hotspots, nearest, mapLink, routeLink } from './geo.js';
 
 /* ---------- утилиты ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -30,6 +30,11 @@ function h(tag, attrs = {}, ...kids) {
 const ico = (html) => { const s = document.createElement('span'); s.style.display = 'inline-flex'; s.innerHTML = html; return s; };
 const CHEV = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 const WARN = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 2L17 16H1L9 2Z"/><path d="M9 7v4M9 13.2v.1"/></svg>';
+
+// replaceChildren превращает null/false в текст «null»/«false», поэтому пустые значения отфильтровываем
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((c) => c != null && c !== false && c !== ''));
+
+const put = (el, ...kids) => el.append(...kids.flat().filter((c) => c != null && c !== false && c !== ''));
 
 let toastT;
 function toast(msg) {
@@ -195,7 +200,7 @@ function albumView() {
 
   const total = plants().length;
   const found = new Set(S.entries.map((e) => e.speciesId).filter(Boolean)).size;
-  root.append(
+  put(root,
     h('div', { class: 'head' },
       h('div', {}, h('div', { class: 'kicker' }, 'Мой гербарий'), h('h1', {}, 'Альбом')),
       h('div', { class: 'cnt' }, `${found} из ${total}`, h('br'), COUNTRIES[S.settings.country].name)),
@@ -224,7 +229,7 @@ function catalogView(selectedId) {
   };
   const total = plants().length;
   const got = plants().filter((p) => gotIds.has(p.id)).length;
-  root.append(
+  put(root,
     h('div', { class: 'kicker' }, `${COUNTRIES[S.settings.country].name} · собрано ${got} из ${total}`),
     h('h1', {}, 'Каталог'),
     h('div', { class: 'seg', 'aria-hidden': 'true' }, Array.from({ length: total }, (_, i) => h('i', { class: i < got ? 'on' : '' }))),
@@ -310,7 +315,7 @@ function addView(params) {
   };
 
   const paint = () => {
-    root.replaceChildren(
+    fill(root,
       h('div', { class: 'kicker' }, 'Новая находка'),
       h('h1', {}, 'Найти растение'),
       h('p', { class: 'sub' }, 'Фото, определение, имя — и оно в вашем альбоме.'),
@@ -398,7 +403,7 @@ function entryView(id) {
     h('input', { type: 'text', value: place, oninput: (ev) => (place = ev.target.value) }),
     h('label', { class: 'lbl' }, 'Заметка'),
     h('textarea', { oninput: (ev) => (note = ev.target.value) }, note),
-    e.lat != null && h('p', { class: 'sub' }, 'Место находки: ', h('a', { href: osmLink(e.lat, e.lon), target: '_blank', rel: 'noopener' }, `${e.lat}, ${e.lon}`)),
+    e.lat != null && h('p', { class: 'sub' }, 'Место находки: ', h('a', { href: mapLink(e.lat, e.lon), target: '_blank', rel: 'noopener' }, `${e.lat}, ${e.lon}`)),
     h('p', { class: 'sub mono' }, e.date),
     h('div', { class: 'row', style: 'margin-top:8px' },
       h('button', { class: 'btn', onclick: async () => {
@@ -520,7 +525,7 @@ function locChooser(onDone) {
   const results = h('div');
   let q = '';
   const done = async (loc) => { await setLoc({ ...loc, km: 30 }); onDone(); };
-  const sel = h('select', { 'aria-label': 'Город', onchange: (e) => { const c = CITIES.find((x) => x[0] === e.target.value); if (c) done({ name: c[0], lat: c[1], lon: c[2] }); } },
+  const sel = h('select', { 'aria-label': 'Город', onchange: (e) => { const c = CITIES.find((x) => x[0] === e.target.value); if (c) done({ name: c[0], lat: c[1], lon: c[2], follow: false }); } },
     h('option', { value: '' }, 'Выбрать из списка…'),
     [...new Set(CITIES.map((c) => c[4]))].map((g) =>
       h('optgroup', { label: g }, CITIES.filter((c) => c[4] === g).map(([n]) => h('option', { value: n }, n)))));
@@ -531,7 +536,7 @@ function locChooser(onDone) {
       try {
         const pos = await locate();
         const name = await placeName(pos.lat, pos.lon).catch(() => 'Моё место');
-        await done({ name, lat: r2(pos.lat), lon: r2(pos.lon) });
+        await done({ name, lat: r2(pos.lat), lon: r2(pos.lon), follow: true });
       } catch (e) { status.textContent = e.message; }
     } }, 'Определить моё место'),
     h('label', { class: 'lbl' }, 'Или выберите город'), sel,
@@ -552,14 +557,15 @@ function locChooser(onDone) {
 function nearbyView() {
   const loc = S.settings.loc;
   const root = h('div', {}, h('div', { class: 'kicker' }, 'Рядом с вами'), h('h1', {}, 'Рядом'));
-  if (!loc) { root.append(locChooser(render)); return root; }
+  if (!loc) { put(root, locChooser(render)); return root; }
   const box = h('div');
-  root.append(
+  put(root,
     h('div', { class: 'locbar' },
       h('span', { class: 'ln' }, h('b', {}, loc.name)),
       h('select', { 'aria-label': 'Радиус', onchange: async (e) => { await setLoc({ ...loc, km: +e.target.value }); render(); } },
         [10, 30, 50, 100].map((k) => h('option', { value: k, selected: (loc.km || 30) === k }, k + ' км'))),
       h('button', { class: 'chip', onclick: async () => { await setLoc(null); render(); } }, 'Изменить')),
+    loc.follow && h('p', { class: 'sub' }, 'Место обновляется само, когда вы перемещаетесь (если разрешена геопозиция).'),
     box);
   box.append(h('p', { class: 'sub' }, 'Смотрю, что здесь встречали…'));
   countsNear(plants(), loc).then((c) => paintNearby(box, c))
@@ -598,13 +604,16 @@ function whereBody(p) {
     return box;
   }
   const km = loc.km || 30;
-  hotspots(p.lat, loc, km).then((r) => {
+  hotspots(p.lat, loc, km, langsFor(loc.lat, loc.lon)).then((r) => {
     if (!r.total) { box.replaceChildren(h('p', {}, `В радиусе ${km} км наблюдений этого растения не найдено. Попробуйте увеличить радиус или выбрать другой город.`)); return; }
     box.replaceChildren(
       h('p', {}, `Наблюдений рядом: ${r.total}.` + (r.monthText?.length ? ` Чаще всего их фиксируют в ${r.monthText.join(', ')}.` : '')),
       h('div', { class: 'spots' }, r.items.map((it) => h('div', { class: 'spot' },
-        h('div', {}, h('b', {}, it.name), h('small', {}, `${it.kind === 'place' ? 'парк или природная территория' : 'район'} · ${it.km} км от вас · ${it.count} ${plural(it.count, 'наблюдение', 'наблюдения', 'наблюдений')}`)),
-        h('a', { class: 'chip', href: osmLink(it.lat, it.lon), target: '_blank', rel: 'noopener' }, 'карта')))),
+        h('div', {}, h('b', { dir: 'auto' }, it.name), it.name2 && h('span', { class: 'nm2', dir: 'auto' }, it.name2),
+          h('small', {}, `${it.kind === 'place' ? 'парк или природная территория' : 'район'} · ${it.km} км от вас · ${it.count} ${plural(it.count, 'наблюдение', 'наблюдения', 'наблюдений')}`)),
+        h('div', { class: 'acts' },
+          h('a', { class: 'chip', href: mapLink(it.lat, it.lon), target: '_blank', rel: 'noopener' }, 'Google Maps'),
+          h('a', { class: 'chip', href: routeLink(it.lat, it.lon), target: '_blank', rel: 'noopener' }, 'Маршрут'))))),
       h('p', { class: 'sub' }, 'Данные: GBIF и iNaturalist. Точки приблизительные, место может быть закрыто или охраняться. Наблюдайте и фотографируйте, не срывайте: многие виды под охраной.'));
   }).catch((e) => box.replaceChildren(h('p', {}, 'Не удалось получить данные: ' + e.message + '. Нужна сеть.')));
   return box;
@@ -643,6 +652,68 @@ function render() {
   if (sl) sl.scrollTop = keep; else window.scrollTo(0, 0);
 }
 
+/* ---------- подсказка «рядом растение» ---------- */
+// Веб-приложение не может присылать уведомления в фоне без сервера, поэтому подсказка появляется
+// при открытии приложения и когда оно снова становится активным (например, после перелёта или поездки).
+const NUDGE_GAP = 24 * 3600 * 1000;
+let nudgeBusy = false, lastNudge = 0;
+
+function closeNudge() { document.getElementById('nudge')?.remove(); }
+
+function showNudge({ p, n }) {
+  closeNudge();
+  const km = n.km < 1 ? 'меньше километра' : `≈ ${String(n.km).replace('.', ',')} км`;
+  const box = h('div', { id: 'nudge', role: 'status' },
+    h('button', { class: 'x', 'aria-label': 'Закрыть', onclick: closeNudge }, '×'),
+    h('div', { class: 'k' }, 'Рядом с вами'),
+    h('div', { class: 'tt' }, art(p.id), h('div', {}, h('b', {}, p.ru), h('i', { class: 'lat' }, p.lat), h('span', {}, `${km} от вас · ещё не в альбоме`))),
+    h('div', { class: 'acts' },
+      h('a', { class: 'chip', href: mapLink(n.lat, n.lon), target: '_blank', rel: 'noopener', onclick: closeNudge }, 'Где это'),
+      h('a', { class: 'chip', href: routeLink(n.lat, n.lon), target: '_blank', rel: 'noopener', onclick: closeNudge }, 'Маршрут'),
+      h('a', { class: 'chip', href: '#/plant/' + p.id, onclick: closeNudge }, 'Карточка')),
+    h('small', {}, 'По наблюдениям других людей (iNaturalist), точка приблизительная. Фотографируйте, не срывайте.'));
+  document.body.append(box);
+}
+
+async function maybeNudge(force = false) {
+  if (nudgeBusy || (!force && Date.now() - lastNudge < 10 * 60 * 1000)) return;
+  nudgeBusy = true; lastNudge = Date.now();
+  try {
+    let loc = S.settings.loc;
+    // место обновляем тихо и только если геопозиция уже разрешена (запрос не всплывает сам)
+    if ((!loc || loc.follow) && navigator.permissions) {
+      const st = await navigator.permissions.query({ name: 'geolocation' }).catch(() => null);
+      if (st?.state === 'granted') {
+        const pos = await locate().catch(() => null);
+        if (pos && (!loc || distanceKm(loc, pos) > 5)) {
+          const prev = S.settings.country;
+          const name = await placeName(pos.lat, pos.lon).catch(() => 'Моё место');
+          await setLoc({ name, lat: r2(pos.lat), lon: r2(pos.lon), km: loc?.km || 30, follow: true });
+          loc = S.settings.loc;
+          if (S.settings.country !== prev) { toast(`Вы здесь: ${COUNTRIES[S.settings.country].name}. Каталог переключён.`); render(); }
+        }
+      }
+    }
+    if (!loc) return;
+    const got = new Set(S.entries.map((e) => e.speciesId));
+    const hist = (await db.meta.get('nudge')) || {};
+    const counts = await countsNear(plants(), loc);
+    const inSeason = (p) => (plantMonths(p).includes(nowMonth()) ? 1 : 0);
+    const cand = plants()
+      .filter((p) => !got.has(p.id) && (counts.get(p.id) || 0) > 0 && Date.now() - (hist[p.id] || 0) > NUDGE_GAP)
+      .sort((x, y) => inSeason(y) - inSeason(x) || counts.get(y.id) - counts.get(x.id)).slice(0, 5);
+    let best = null;
+    for (const p of cand) {
+      const n = await nearest(p.lat, loc, loc.km || 30).catch(() => null);
+      if (n && (!best || n.km < best.n.km)) best = { p, n };
+    }
+    if (!best) return;
+    hist[best.p.id] = Date.now();
+    await db.meta.set('nudge', hist);
+    showNudge(best);
+  } catch { /* подсказка необязательна */ } finally { nudgeBusy = false; }
+}
+
 async function boot() {
   const saved = await db.meta.get('settings');
   if (saved) Object.assign(S.settings, saved);
@@ -650,6 +721,8 @@ async function boot() {
   window.addEventListener('hashchange', render);
   wideMq.addEventListener('change', render);
   render();
+  setTimeout(() => maybeNudge(true), 1500);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') maybeNudge(); });
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

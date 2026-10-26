@@ -165,9 +165,11 @@ details.none { margin-top: 16px; }
 details.none summary { cursor: pointer; font-size: 14px; color: var(--muted); min-height: 36px; }
 .spots { display: flex; flex-direction: column; margin: 6px 0 10px; border-top: 1px solid var(--line2); }
 .spot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line2); font-family: var(--sans); }
-.spot b { display: block; font-family: var(--serif); font-weight: 600; font-size: 16px; }
+.spot b { display: block; font-family: var(--serif); font-weight: 600; font-size: 16px; unicode-bidi: plaintext; text-align: left; }
 .spot small { color: var(--muted); font-size: 12.5px; }
 .spot .chip { text-decoration: none; flex: none; }
+.spot .nm2 { unicode-bidi: plaintext; text-align: left; display: block; font-family: var(--sans); font-size: 13.5px; color: var(--muted); }
+.spot .acts { display: flex; flex-direction: column; gap: 6px; align-items: stretch; text-align: center; flex: none; }
 .chk { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; font-size: 14px; min-height: 44px; }
 .chk input { width: 20px; height: 20px; min-height: 0; accent-color: var(--moss); }
 @media (prefers-color-scheme: dark) { .card.locked .ph .art { filter: brightness(0) invert(1) opacity(.2); } }
@@ -189,3 +191,16 @@ details.none summary { cursor: pointer; font-size: 14px; color: var(--muted); mi
   .split-main .hero .tt h1 { font-size: 38px; }
   .split-main .lore { max-width: 620px; }
 }
+
+/* подсказка «рядом растение» */
+#nudge { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); width: min(92vw, 420px); z-index: 8; background: var(--card, #FBF6E8); color: var(--ink); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(40, 36, 20, .18); padding: 12px 14px 10px; font-family: var(--sans); }
+#nudge .k { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#nudge .tt { display: flex; gap: 12px; align-items: center; margin: 6px 0 8px; }
+#nudge .tt .art { flex: none; width: 52px; height: 68px; }
+#nudge .tt b { display: block; font: 600 18px var(--serif); }
+#nudge .tt .lat { display: block; font-size: 13px; color: var(--muted); }
+#nudge .tt span { display: block; font-size: 14px; }
+#nudge .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+#nudge .acts .chip { text-decoration: none; }
+#nudge small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+#nudge .x { position: absolute; top: 4px; right: 6px; width: 32px; height: 32px; background: none; border: 0; font-size: 22px; color: var(--muted); cursor: pointer; }
