@@ -1,5 +1,5 @@
 // Офлайн: кэшируем оболочку приложения. Поднимай VERSION при каждом изменении файлов.
-const VERSION = 'alder-v6';
+const VERSION = 'alder-v7';
 const SHELL = [
   './',
   './index.html',
@@ -40,7 +40,7 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
